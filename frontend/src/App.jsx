@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import './App.css';
-import ControlPanel from './components/ControlPanel';
-import XAIDashboard from './components/XAIDashboard';
-import SessionAnalysis from './components/SessionAnalysis';
-import SubjectProfile from './components/SubjectProfile';
-import MonitoringDash from './components/MonitoringDash';
-import ExplainabilityPanel from './components/ExplainabilityPanel';
 
 function App() {
   const [activeTab, setActiveTab] = useState('control');
