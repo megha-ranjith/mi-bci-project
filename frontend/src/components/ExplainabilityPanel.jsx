@@ -3,44 +3,42 @@ import React from 'react';
 function ExplainabilityPanel() {
   return (
     <div className="explainability-panel">
-      <h2>📚 Explainability & Education</h2>
+      <h2>Educational Resource</h2>
       
-      <div className="education-content">
-        <section>
-          <h3>What is Grad-CAM?</h3>
-          <p>
-            Class Activation Mapping highlights which EEG channels (electrodes) 
-            were most important for the model's decision. Brighter colors = more important.
-          </p>
-        </section>
+      <div className="edu-card">
+        <h3>What is Motor Imagery (MI)?</h3>
+        <p>
+          Motor imagery is the mental simulation of movement without actual physical action. 
+          When you imagine moving your right hand, your motor cortex activates similarly to 
+          when you actually move it.
+        </p>
+      </div>
 
-        <section>
-          <h3>What is Integrated Gradients?</h3>
-          <p>
-            This method shows how each part of the signal (channel × time) 
-            contributed to the prediction by integrating gradients from baseline.
-          </p>
-        </section>
+      <div className="edu-card">
+        <h3>What is Grad-CAM?</h3>
+        <p>
+          Grad-CAM (Gradient-weighted Class Activation Map) shows which EEG channels 
+          (electrodes) were most important for the model's prediction. This helps understand 
+          if the AI is using the correct brain regions (e.g., C3/C4 for hands).
+        </p>
+      </div>
 
-        <section>
-          <h3>Why is this important for patients?</h3>
-          <ul>
-            <li>Therapists can see which brain areas are activating</li>
-            <li>Feedback: "Your motor cortex is activating well"</li>
-            <li>Guides neurofeedback training</li>
-            <li>Builds confidence through transparency</li>
-          </ul>
-        </section>
+      <div className="edu-card">
+        <h3>What is Uncertainty?</h3>
+        <p>
+          Uncertainty measures how confident the model is. High uncertainty means you should 
+          repeat the trial. Low uncertainty means the prediction is reliable.
+        </p>
+      </div>
 
-        <section>
-          <h3>Motor Imagery Brain Regions</h3>
-          <ul>
-            <li><strong>C3, C4:</strong> Central motor cortex</li>
-            <li><strong>CP3, CP4:</strong> Parietal motor regions</li>
-            <li><strong>Cz, CPz:</strong> Midline motor areas</li>
-            <li><strong>P3, P4:</strong> Parietal areas</li>
-          </ul>
-        </section>
+      <div className="edu-card">
+        <h3>How to Improve Your MI Skills</h3>
+        <ul>
+          <li>Focus on kinesthetic imagery (feel the movement)</li>
+          <li>Practice the same MI task repeatedly</li>
+          <li>Watch the real-time feedback</li>
+          <li>Build awareness of motor cortex activation</li>
+        </ul>
       </div>
     </div>
   );

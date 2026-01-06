@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
 import './App.css';
-
 import ControlPanel from './components/ControlPanel';
 import XAIDashboard from './components/XAIDashboard';
 import SessionAnalysis from './components/SessionAnalysis';
@@ -10,86 +9,111 @@ import MonitoringDash from './components/MonitoringDash';
 import ExplainabilityPanel from './components/ExplainabilityPanel';
 
 function App() {
-  const [socket, setSocket] = useState(null);
   const [activeTab, setActiveTab] = useState('control');
+  const [socket, setSocket] = useState(null);
   const [sessionId, setSessionId] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [predictions, setPredictions] = useState([]);
+  const [isLive, setIsLive] = useState(false);
+  const [backendHealth, setBackendHealth] = useState('disconnected');
 
   useEffect(() => {
     // Connect to backend
-    const newSocket = io('http://localhost:5000');
-    
+    const newSocket = io('http://localhost:5000', {
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5
+    });
+
     newSocket.on('connect', () => {
-      console.log('✅ Connected to server');
+      console.log('Connected to backend');
+      setBackendHealth('connected');
     });
-    
-    newSocket.on('prediction_result', (data) => {
-      setPredictions(prev => [...prev, data].slice(-50));  // Keep last 50
+
+    newSocket.on('disconnect', () => {
+      setBackendHealth('disconnected');
     });
-    
+
+    newSocket.on('prediction_update', (data) => {
+      setPredictions(prev => [data, ...prev].slice(0, 50)); // Keep last 50
+    });
+
     setSocket(newSocket);
-    
+
+    // Check backend health
+    fetch('http://localhost:5000/api/health')
+      .then(res => res.json())
+      .then(data => setBackendHealth('healthy'))
+      .catch(() => setBackendHealth('unhealthy'));
+
     return () => newSocket.close();
   }, []);
 
-  const startSession = async (name, age, condition) => {
+  const handleStartSession = async () => {
     try {
-      // Create user
-      const userRes = await fetch('http://localhost:5000/api/user/create', {
+      const res = await fetch('http://localhost:5000/api/sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, age, condition })
+        body: JSON.stringify({ user_id: 1 })
       });
-      const userData = await userRes.json();
-      const newUserId = userData.user_id;
-      setUserId(newUserId);
-      
-      // Create session
-      const sessionRes = await fetch('http://localhost:5000/api/session/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: newUserId })
-      });
-      const sessionData = await sessionRes.json();
-      const newSessionId = sessionData.session_id;
-      setSessionId(newSessionId);
+      const data = await res.json();
+      setSessionId(data.session_id);
+      setIsLive(true);
       
       // Start streaming
-      socket.emit('start_stream', { session_id: newSessionId });
-      setIsStreaming(true);
-    } catch (error) {
-      console.error('Error starting session:', error);
+      if (socket) {
+        socket.emit('start_stream', { session_id: data.session_id });
+      }
+    } catch (err) {
+      console.error('Failed to start session:', err);
     }
   };
 
-  const stopSession = () => {
-    if (socket && sessionId) {
-      socket.emit('stop_stream', { session_id: sessionId });
-      setIsStreaming(false);
+  const handleStopSession = async () => {
+    if (!sessionId) return;
+    
+    try {
+      const res = await fetch(`http://localhost:5000/api/sessions/${sessionId}/end`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      setIsLive(false);
+      
+      if (socket) {
+        socket.emit('stop_stream', { session_id: sessionId });
+      }
+    } catch (err) {
+      console.error('Failed to end session:', err);
     }
   };
 
   return (
     <div className="app">
+      {/* Header */}
       <header className="app-header">
-        <h1>🧠 Adaptive Motor Imagery BCI System</h1>
-        <p>Real-time EEG Decoding with Explainable AI</p>
+        <div className="header-content">
+          <h1>🧠 MI-BCI System</h1>
+          <div className="header-status">
+            <span className={`status-badge ${backendHealth === 'connected' ? 'connected' : 'disconnected'}`}>
+              {backendHealth === 'connected' ? '🟢 LIVE' : '🔴 OFFLINE'}
+            </span>
+            {isLive && <span className="recording-badge">● RECORDING</span>}
+          </div>
+        </div>
       </header>
 
-      <nav className="tab-navigation">
+      {/* Tab Navigation */}
+      <nav className="tab-nav">
         <button 
           className={`tab-btn ${activeTab === 'control' ? 'active' : ''}`}
           onClick={() => setActiveTab('control')}
         >
-          🎮 Control Panel
+          🎮 Control
         </button>
         <button 
           className={`tab-btn ${activeTab === 'xai' ? 'active' : ''}`}
           onClick={() => setActiveTab('xai')}
         >
-          🔍 XAI Dashboard
+          🔍 XAI
         </button>
         <button 
           className={`tab-btn ${activeTab === 'analysis' ? 'active' : ''}`}
@@ -98,10 +122,10 @@ function App() {
           📊 Analysis
         </button>
         <button 
-          className={`tab-btn ${activeTab === 'monitoring' ? 'active' : ''}`}
-          onClick={() => setActiveTab('monitoring')}
+          className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`}
+          onClick={() => setActiveTab('monitor')}
         >
-          🔧 Monitoring
+          🔧 Monitor
         </button>
         <button 
           className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}
@@ -109,39 +133,44 @@ function App() {
         >
           👤 Profile
         </button>
+        <button 
+          className={`tab-btn ${activeTab === 'education' ? 'active' : ''}`}
+          onClick={() => setActiveTab('education')}
+        >
+          📚 Education
+        </button>
       </nav>
 
-      <main className="app-content">
+      {/* Tab Content */}
+      <main className="tab-content">
         {activeTab === 'control' && (
           <ControlPanel 
-            sessionId={sessionId}
-            socket={socket}
-            isStreaming={isStreaming}
-            predictions={predictions}
-            onStartSession={startSession}
-            onStopSession={stopSession}
+            predictions={predictions} 
+            onStart={handleStartSession}
+            onStop={handleStopSession}
+            isLive={isLive}
           />
         )}
-        
         {activeTab === 'xai' && (
           <XAIDashboard predictions={predictions} />
         )}
-        
-        {activeTab === 'analysis' && sessionId && (
-          <SessionAnalysis sessionId={sessionId} />
+        {activeTab === 'analysis' && (
+          <SessionAnalysis predictions={predictions} sessionId={sessionId} />
         )}
-        
-        {activeTab === 'monitoring' && (
-          <MonitoringDash socket={socket} />
+        {activeTab === 'monitor' && (
+          <MonitoringDash backendHealth={backendHealth} />
         )}
-        
         {activeTab === 'profile' && (
-          <SubjectProfile userId={userId} />
+          <SubjectProfile sessionId={sessionId} />
+        )}
+        {activeTab === 'education' && (
+          <ExplainabilityPanel />
         )}
       </main>
 
+      {/* Footer */}
       <footer className="app-footer">
-        <p>Session ID: {sessionId || 'None'} | Status: {isStreaming ? '🔴 LIVE' : '⚫ IDLE'}</p>
+        <p>Motor Imagery BCI System v1.0 | Enhanced IFNet with Explainability</p>
       </footer>
     </div>
   );

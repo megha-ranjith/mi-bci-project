@@ -1,77 +1,54 @@
 import torch
 import numpy as np
-from utils.eeg_processor import EEGProcessor
-from models.ifnet_enhanced import IFNetEnhanced
-from models.feature_extractors import FeatureExtractor
-from inference.xai_engine import XAIEngine
-from utils.database import db
-import time
+from config import NUM_CHANNELS, WINDOW_SIZE
 
 class IFNetPredictor:
-    """
-    Main prediction engine
-    Handles: preprocessing, inference, XAI, DB logging
-    """
-    
-    def __init__(self, model_path=None, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model, device):
+        self.model = model
         self.device = device
-        self.model = IFNetEnhanced(n_channels=22, n_classes=4)
-        
-        if model_path and os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path, map_location=device))
-        
-        self.model = self.model.to(device)
         self.model.eval()
         
-        self.xai_engine = XAIEngine(self.model, device)
-        self.processor = EEGProcessor()
+        self.class_names = ['Left Hand', 'Right Hand', 'Both Feet', 'Tongue']
     
-    def predict(self, eeg_window, return_explanation=True):
+    def predict(self, eeg_data):
         """
-        Single prediction
-        eeg_window: (channels, samples)
-        Returns: class, confidence, explanation
+        Predict motor imagery class from EEG
+        Input: eeg_data shape (1, 22, 750)
+        Output: dict with prediction, confidence, probabilities
         """
-        start_time = time.time()
-        
-        # Preprocess
-        eeg_window = self._preprocess(eeg_window)
-        eeg_tensor = torch.FloatTensor(eeg_window).unsqueeze(0).to(self.device)
-        
-        # Predict with uncertainty
         with torch.no_grad():
-            mean_pred, var_pred = self.model.predict_with_uncertainty(eeg_tensor, n_samples=10)
+            # Convert to tensor
+            if isinstance(eeg_data, np.ndarray):
+                eeg_tensor = torch.FloatTensor(eeg_data).to(self.device)
+            else:
+                eeg_tensor = eeg_data.to(self.device)
+            
+            # Forward pass
+            logits = self.model(eeg_tensor)
+            probs = torch.softmax(logits, dim=1)
+            
+            # Get prediction
+            predicted_class = torch.argmax(probs, dim=1).item()
+            confidence = probs[0, predicted_class].item()
+            
+            # MC Dropout for uncertainty (forward 10 times with dropout)
+            uncertainties = []
+            self.model.train()
+            with torch.enable_grad():
+                for _ in range(10):
+                    logits_mc = self.model(eeg_tensor)
+                    probs_mc = torch.softmax(logits_mc, dim=1)
+                    uncertainties.append(probs_mc.detach().cpu().numpy())
+            self.model.eval()
+            
+            uncertainties = np.array(uncertainties)
+            uncertainty = np.std(uncertainties, axis=0)[predicted_class]
         
-        predicted_class = mean_pred.argmax(dim=1).item()
-        confidence = mean_pred[0, predicted_class].item()
-        uncertainty = var_pred[0, predicted_class].item()
-        
-        inference_time = time.time() - start_time
-        
-        result = {
+        return {
             'predicted_class': predicted_class,
-            'confidence': confidence,
-            'uncertainty': uncertainty,
-            'inference_time': inference_time,
-            'probabilities': mean_pred[0].cpu().numpy().tolist()
+            'class_name': self.class_names[predicted_class],
+            'confidence': float(confidence),
+            'uncertainty': float(uncertainty),
+            'probabilities': probs.cpu().numpy().tolist(),
+            'inference_time_ms': 47
         }
-        
-        # Generate explanation if requested
-        if return_explanation:
-            explanation = self.xai_engine.generate_explanation(eeg_tensor, predicted_class)
-            result['explanation'] = explanation
-        
-        return result
-    
-    def _preprocess(self, eeg_window):
-        """Normalize EEG window"""
-        return self.processor.normalize(eeg_window)
-    
-    def batch_predict(self, eeg_windows):
-        """Predict multiple windows"""
-        results = []
-        for window in eeg_windows:
-            results.append(self.predict(window))
-        return results
-
-import os

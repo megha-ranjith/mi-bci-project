@@ -1,34 +1,68 @@
+"""
+MI-BCI Flask Backend Server
+Real-time motor imagery EEG classification with explainability
+"""
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import torch
 import numpy as np
 import json
-from datetime import datetime
+import time
 import threading
-from inference.predictor import IFNetPredictor
-from utils.database import db
-from utils.constants import CLASS_LABELS, CLASS_COLORS
-from config import HOST, PORT, FLASK_ENV
-import traceback
+from datetime import datetime
+import sqlite3
+import os
 
+from config import *
+from utils.database import Database
+from models.ifnet_enhanced import IFNetEnhanced
+from inference.predictor import IFNetPredictor
+from inference.xai_engine import XAIEngine
+
+# Initialize Flask app
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'mi-bci-secret-key-2026'
 CORS(app)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Initialize predictor
-try:
-    predictor = IFNetPredictor(device='cuda' if torch.cuda.is_available() else 'cpu')
-    print("✅ Model loaded successfully")
-except Exception as e:
-    print(f"❌ Error loading model: {e}")
-    predictor = None
-
-# Active sessions tracking
+# Global state
+db = Database(DATABASE_PATH)
+predictor = None
+xai_engine = None
 active_sessions = {}
+streaming_threads = {}
 
-# ============= REST API ENDPOINTS =============
+print("[INFO] Initializing MI-BCI Backend...")
+
+# Initialize model
+def init_model():
+    global predictor, xai_engine
+    try:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"[INFO] Using device: {device}")
+        
+        model = IFNetEnhanced(num_classes=NUM_CLASSES).to(device)
+        
+        # Load weights if exists
+        if os.path.exists(MODEL_PATH):
+            model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+            print(f"[INFO] Model loaded from {MODEL_PATH}")
+        else:
+            print(f"[WARNING] No model found at {MODEL_PATH}. Using random weights.")
+        
+        predictor = IFNetPredictor(model, device)
+        xai_engine = XAIEngine(model, device)
+        print("[INFO] Model initialized successfully")
+    except Exception as e:
+        print(f"[ERROR] Model initialization failed: {e}")
+
+init_model()
+
+# ============================================================================
+# REST API ENDPOINTS
+# ============================================================================
 
 @app.route('/api/health', methods=['GET'])
 def health():
@@ -36,163 +70,218 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'device': 'CUDA' if torch.cuda.is_available() else 'CPU',
-        'model_loaded': predictor is not None
+        'model_loaded': predictor is not None,
+        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+        'database': 'connected'
     }), 200
 
-@app.route('/api/user/create', methods=['POST'])
-def create_user():
-    """Create new BCI user"""
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    """Get all users"""
     try:
-        data = request.json
-        user_id = db.add_user(
-            name=data.get('name'),
-            age=data.get('age'),
-            condition=data.get('condition', '')
-        )
-        return jsonify({'user_id': user_id, 'status': 'success'}), 201
+        users = db.get_all_users()
+        return jsonify({'users': users}), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/session/start', methods=['POST'])
-def start_session():
-    """Start new BCI session for a user"""
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    """Create new user"""
     try:
         data = request.json
-        user_id = data.get('user_id')
+        user_id = db.create_user(
+            name=data.get('name', 'Unknown'),
+            age=data.get('age', 0),
+            condition=data.get('condition', 'unknown')
+        )
+        return jsonify({'user_id': user_id, 'status': 'created'}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sessions/start', methods=['POST'])
+def start_session():
+    """Start a new BCI session"""
+    try:
+        data = request.json
+        user_id = data.get('user_id', 1)
         
-        session_id = db.add_session(user_id, notes=data.get('notes', ''))
+        session_id = db.create_session(user_id)
         active_sessions[session_id] = {
             'user_id': user_id,
             'start_time': datetime.now(),
-            'trials': []
+            'trials': [],
+            'predictions': []
         }
         
         return jsonify({
             'session_id': session_id,
-            'status': 'started',
-            'timestamp': datetime.now().isoformat()
+            'user_id': user_id,
+            'status': 'started'
         }), 201
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sessions/<int:session_id>/end', methods=['POST'])
+def end_session(session_id):
+    """End current BCI session"""
+    try:
+        if session_id in active_sessions:
+            session_data = active_sessions[session_id]
+            predictions = np.array(session_data['predictions'])
+            
+            if len(predictions) > 0:
+                accuracy = np.mean(predictions[:, 2])  # Confidence column
+            else:
+                accuracy = 0
+            
+            db.update_session(session_id, len(session_data['trials']), accuracy)
+            del active_sessions[session_id]
+            
+            return jsonify({
+                'session_id': session_id,
+                'status': 'ended',
+                'total_trials': len(session_data['trials']),
+                'accuracy': float(accuracy)
+            }), 200
+        else:
+            return jsonify({'error': 'Session not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sessions/<int:session_id>', methods=['GET'])
+def get_session(session_id):
+    """Get session details"""
+    try:
+        if session_id in active_sessions:
+            session_data = active_sessions[session_id]
+            return jsonify({
+                'session_id': session_id,
+                'user_id': session_data['user_id'],
+                'start_time': session_data['start_time'].isoformat(),
+                'trials_count': len(session_data['trials']),
+                'predictions': session_data['predictions'][:20]  # Last 20
+            }), 200
+        else:
+            return jsonify({'error': 'Session not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
-    """
-    Make prediction on EEG window
-    Input: JSON with 'eeg_data' (channels x samples)
-    """
+    """Make a prediction from EEG data"""
     try:
-        if predictor is None:
-            return jsonify({'error': 'Model not loaded'}), 500
-        
         data = request.json
-        eeg_data = np.array(data.get('eeg_data'))
-        session_id = data.get('session_id')
-        true_label = data.get('true_label', -1)
+        eeg_data = np.array(data.get('eeg_data', []))
         
-        # Make prediction
-        result = predictor.predict(eeg_data, return_explanation=True)
+        if eeg_data.size == 0:
+            return jsonify({'error': 'No EEG data provided'}), 400
         
-        # Log to database if session provided
-        if session_id and session_id in active_sessions:
-            trial_id = db.log_trial(
-                session_id=session_id,
-                true_label=true_label,
-                pred_label=result['predicted_class'],
-                confidence=result['confidence'],
-                inf_time=result['inference_time']
-            )
-            result['trial_id'] = trial_id
+        # Reshape: (channels, samples) -> (1, channels, samples)
+        if len(eeg_data.shape) == 2:
+            eeg_data = eeg_data[np.newaxis, :, :]
+        
+        # Predict
+        result = predictor.predict(eeg_data)
         
         return jsonify(result), 200
-    
     except Exception as e:
-        print(f"Prediction error: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/session/<int:session_id>/stats', methods=['GET'])
-def get_session_stats(session_id):
-    """Get session statistics"""
-    try:
-        stats = db.get_session_stats(session_id)
-        return jsonify(stats), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@app.route('/api/classes', methods=['GET'])
-def get_classes():
-    """Get MI class labels and colors"""
-    return jsonify({
-        'classes': CLASS_LABELS,
-        'colors': CLASS_COLORS
-    }), 200
-
-# ============= WebSocket Events (Real-time Streaming) =============
+# ============================================================================
+# WEBSOCKET EVENTS (Real-time streaming)
+# ============================================================================
 
 @socketio.on('connect')
 def handle_connect():
-    """Client connects"""
-    print(f"✅ Client connected: {request.sid}")
-    emit('response', {'data': 'Connected to BCI server'})
+    """Handle client connection"""
+    print(f"[SOCKET] Client connected: {request.sid}")
+    emit('response', {'data': 'Connected to MI-BCI server'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Client disconnects"""
-    print(f"❌ Client disconnected: {request.sid}")
+    """Handle client disconnection"""
+    print(f"[SOCKET] Client disconnected: {request.sid}")
 
 @socketio.on('start_stream')
 def handle_start_stream(data):
-    """Start real-time prediction stream"""
-    session_id = data.get('session_id')
-    print(f"🎬 Stream started for session {session_id}")
-    emit('stream_started', {'session_id': session_id})
-
-@socketio.on('eeg_chunk')
-def handle_eeg_chunk(data):
-    """Receive and predict on EEG chunk"""
-    try:
-        eeg_data = np.array(data.get('eeg_data'))
-        session_id = data.get('session_id')
-        
-        result = predictor.predict(eeg_data)
-        result['class_name'] = CLASS_LABELS[result['predicted_class']]
-        result['class_color'] = CLASS_COLORS[result['predicted_class']]
-        
-        # Emit to client
-        emit('prediction_result', result, room=request.sid)
+    """Start EEG streaming"""
+    session_id = data.get('session_id', 1)
     
-    except Exception as e:
-        emit('error', {'message': str(e)}, room=request.sid)
+    def stream_eeg():
+        """Simulate EEG streaming"""
+        for i in range(100):  # 100 predictions
+            if session_id not in active_sessions:
+                break
+            
+            # Simulate EEG data
+            eeg_data = np.random.randn(1, NUM_CHANNELS, WINDOW_SIZE).astype(np.float32)
+            
+            # Predict
+            prediction = predictor.predict(eeg_data)
+            
+            # Get XAI
+            xai_data = xai_engine.explain(eeg_data)
+            
+            # Combine
+            result = {
+                **prediction,
+                'xai': xai_data,
+                'trial_number': i + 1
+            }
+            
+            # Log to DB
+            db.create_trial(
+                session_id=session_id,
+                predicted_label=prediction['predicted_class'],
+                confidence=prediction['confidence']
+            )
+            
+            # Emit to client
+            socketio.emit('prediction_update', result, room=request.sid)
+            
+            time.sleep(0.1)  # 100ms between predictions
+    
+    # Start streaming in background
+    thread = threading.Thread(target=stream_eeg, daemon=True)
+    streaming_threads[session_id] = thread
+    thread.start()
+    
+    emit('stream_started', {'session_id': session_id, 'status': 'streaming'})
 
 @socketio.on('stop_stream')
 def handle_stop_stream(data):
-    """Stop streaming"""
-    session_id = data.get('session_id')
-    print(f"⏹️  Stream stopped for session {session_id}")
-    emit('stream_stopped', {'session_id': session_id})
+    """Stop EEG streaming"""
+    session_id = data.get('session_id', 1)
+    
+    if session_id in streaming_threads:
+        del streaming_threads[session_id]
+    
+    emit('stream_stopped', {'session_id': session_id, 'status': 'stopped'})
 
-# ============= Error Handlers =============
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
 
 @app.errorhandler(404)
-def not_found(error):
+def not_found(e):
     return jsonify({'error': 'Endpoint not found'}), 404
 
 @app.errorhandler(500)
-def internal_error(error):
+def internal_error(e):
     return jsonify({'error': 'Internal server error'}), 500
 
-# ============= Run Server =============
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == '__main__':
-    print(f"""
-    🚀 Starting BCI Backend Server
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    Environment: {FLASK_ENV}
-    Host: {HOST}
-    Port: {PORT}
-    Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}
-    Model: {'Loaded ✅' if predictor else 'Not Loaded ❌'}
-    """)
+    print(f"[INFO] Starting MI-BCI server on {HOST}:{PORT}")
+    print(f"[INFO] API docs available at http://{HOST}:{PORT}/api/health")
     
-    socketio.run(app, host=HOST, port=PORT, debug=(FLASK_ENV == 'development'))
+    socketio.run(
+        app,
+        host=HOST,
+        port=PORT,
+        debug=DEBUG,
+        allow_unsafe_werkzeug=True
+    )

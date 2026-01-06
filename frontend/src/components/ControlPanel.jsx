@@ -1,100 +1,69 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-function ControlPanel({ sessionId, socket, isStreaming, predictions, onStartSession, onStopSession }) {
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [condition, setCondition] = useState('');
-
-  const handleStart = () => {
-    if (name && age) {
-      onStartSession(name, age, condition);
-    }
-  };
-
-  const latestPrediction = predictions[predictions.length - 1];
-  const classNames = {
-    0: 'Left Hand',
-    1: 'Right Hand',
-    2: 'Both Feet',
-    3: 'Tongue'
-  };
-
+function ControlPanel({ predictions, onStart, onStop, isLive }) {
+  const latestPred = predictions;
+  const classNames = ['🖐️ Left Hand', '🖐️ Right Hand', '🦵 Both Feet', '👅 Tongue'];
+  
   return (
     <div className="control-panel">
-      <h2>🎮 Real-Time BCI Control Panel</h2>
-      
-      {!isStreaming ? (
-        <div className="session-setup">
-          <div className="form-group">
-            <label>Subject Name:</label>
-            <input 
-              type="text" 
-              value={name} 
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter name"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label>Age:</label>
-            <input 
-              type="number" 
-              value={age} 
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="Enter age"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label>Condition (optional):</label>
-            <select value={condition} onChange={(e) => setCondition(e.target.value)}>
-              <option value="">Healthy</option>
-              <option value="stroke">Stroke Patient</option>
-              <option value="spinal">Spinal Cord Injury</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          
-          <button className="btn-primary" onClick={handleStart}>
-            ▶️ Start Session
-          </button>
+      <div className="prediction-card">
+        <div className="prediction-class">
+          {latestPred ? classNames[latestPred.predicted_class] : 'Waiting...'}
         </div>
-      ) : (
-        <div className="session-active">
-          <div className="prediction-display">
-            {latestPrediction && (
-              <>
-                <div className="prediction-class">
-                  <h3>{classNames[latestPrediction.predicted_class]}</h3>
-                  <div className="confidence-bar">
-                    <div 
-                      className="confidence-fill"
-                      style={{width: `${latestPrediction.confidence * 100}%`}}
-                    />
-                  </div>
-                  <p>Confidence: {(latestPrediction.confidence * 100).toFixed(1)}%</p>
-                </div>
-              </>
-            )}
-          </div>
-          
-          <div className="prediction-history">
-            <h3>Recent Predictions:</h3>
-            <div className="history-list">
-              {predictions.slice(-10).reverse().map((pred, idx) => (
-                <div key={idx} className="history-item">
-                  <span>{classNames[pred.predicted_class]}</span>
-                  <span className="confidence">{(pred.confidence * 100).toFixed(0)}%</span>
-                </div>
-              ))}
+        <div className="confidence-bar">
+          <div 
+            className="confidence-fill"
+            style={{ width: `${(latestPred?.confidence || 0) * 100}%` }}
+          />
+        </div>
+        <div className="confidence-text">
+          Confidence: {latestPred ? (latestPred.confidence * 100).toFixed(1) : 0}%
+        </div>
+        <div className="uncertainty-text">
+          Uncertainty: {latestPred ? (latestPred.uncertainty * 100).toFixed(2) : 0}%
+        </div>
+      </div>
+
+      <div className="probabilities-card">
+        <h3>Class Probabilities</h3>
+        {latestPred && latestPred.probabilities.map((prob, i) => (
+          <div key={i} className="prob-bar">
+            <span>{classNames[i]}</span>
+            <div className="bar">
+              <div className="fill" style={{ width: `${prob * 100}%` }} />
             </div>
+            <span>{(prob * 100).toFixed(1)}%</span>
           </div>
-          
-          <button className="btn-danger" onClick={onStopSession}>
-            ⏹️ Stop Session
-          </button>
+        ))}
+      </div>
+
+      <div className="controls">
+        <button 
+          className="btn btn-start" 
+          onClick={onStart}
+          disabled={isLive}
+        >
+          ▶️ START SESSION
+        </button>
+        <button 
+          className="btn btn-stop" 
+          onClick={onStop}
+          disabled={!isLive}
+        >
+          ⏹️ STOP SESSION
+        </button>
+      </div>
+
+      <div className="recent-predictions">
+        <h3>Recent Predictions</h3>
+        <div className="pred-list">
+          {predictions.slice(0, 10).map((pred, i) => (
+            <div key={i} className="pred-item">
+              {classNames[pred.predicted_class]} - {(pred.confidence * 100).toFixed(0)}%
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

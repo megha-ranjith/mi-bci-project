@@ -1,69 +1,74 @@
 import React from 'react';
 
 function XAIDashboard({ predictions }) {
-  const latestPrediction = predictions[predictions.length - 1];
+  const latestPred = predictions;
+  const xai = latestPred?.xai?.grad_cam;
 
   return (
     <div className="xai-dashboard">
-      <h2>🔍 Neural Interpretability Dashboard</h2>
+      <h2>Neural Interpretability Dashboard</h2>
       
-      {latestPrediction && latestPrediction.explanation ? (
-        <div className="explanation-content">
-          <div className="explanation-section">
-            <h3>🧠 Method: Grad-CAM + Integrated Gradients</h3>
-            <p>
-              Hybrid approach shows which EEG channels and time segments 
-              contributed most to the model's decision.
-            </p>
-          </div>
-          
-          <div className="importance-section">
-            <h4>Channel Importance (Grad-CAM)</h4>
-            <div className="importance-bars">
-              {latestPrediction.explanation.grad_cam.channel_importance.slice(0, 10).map((imp, idx) => (
-                <div key={idx} className="bar-item">
-                  <span className="channel-name">Ch {idx}</span>
-                  <div className="bar">
-                    <div className="bar-fill" style={{width: `${(imp / 0.5) * 100}%`}} />
-                  </div>
-                  <span className="value">{imp.toFixed(3)}</span>
+      {xai ? (
+        <>
+          <div className="xai-section">
+            <h3>Channel Importance (EEG Electrodes)</h3>
+            <div className="channels-grid">
+              {xai.channel_importance.map((imp, i) => (
+                <div 
+                  key={i} 
+                  className="channel-box"
+                  style={{ opacity: 0.3 + (imp * 0.7) }}
+                  title={`${xai.channel_names[i]}: ${(imp * 100).toFixed(1)}%`}
+                >
+                  {xai.channel_names[i]}
+                  <div className="importance-value">{(imp * 100).toFixed(0)}%</div>
                 </div>
               ))}
             </div>
           </div>
-          
-          <div className="time-importance">
-            <h4>Time Segment Importance</h4>
-            <p>Red = more important time windows for the decision</p>
-            <div className="time-heatmap">
-              {/* Simplified: show bars for time bins */}
-              {latestPrediction.explanation.grad_cam.time_importance.slice(0, 30).map((imp, idx) => (
+
+          <div className="xai-section">
+            <h3>Top Contributing Channels</h3>
+            {latestPred.xai.top_channels.map((ch, i) => (
+              <div key={i} className="channel-bar">
+                <span>{ch.name}</span>
+                <div className="bar">
+                  <div className="fill" style={{ width: `${ch.importance * 100}%` }} />
+                </div>
+                <span>{(ch.importance * 100).toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="xai-section">
+            <h3>Time Importance Heatmap</h3>
+            <div className="heatmap">
+              {xai.time_importance.map((val, i) => (
                 <div 
-                  key={idx} 
-                  className="time-bin"
-                  style={{
-                    height: `${(imp / 0.02) * 100}px`,
-                    backgroundColor: `rgba(255, 0, 0, ${imp / 0.02})`
+                  key={i}
+                  className="heatmap-cell"
+                  style={{ 
+                    backgroundColor: `rgba(0, 100, 200, ${val})`
                   }}
-                  title={`Time: ${idx * 10}ms, Importance: ${imp.toFixed(4)}`}
+                  title={`t=${i*10}ms: ${(val*100).toFixed(0)}%`}
                 />
               ))}
             </div>
+            <p className="heatmap-label">Time progression (0ms to 3000ms)</p>
           </div>
 
-          <div className="neuroscience-insight">
-            <h4>💡 Neuroscience Insight</h4>
-            <p>
-              The important channels highlighted above correspond to motor cortex regions (C3, C4, Cz)
-              which is expected for motor imagery tasks. The temporal importance shows that 
-              activation peaks around 1-2 seconds after movement cue, consistent with MI ERD/ERS patterns.
-            </p>
+          <div className="neuroscience-info">
+            <h4>📌 Neuroscience Insight</h4>
+            <p>The highlighted channels correspond to motor cortex regions:</p>
+            <ul>
+              <li><strong>C3/C4:</strong> Primary motor cortex (hand/arm)</li>
+              <li><strong>Cz:</strong> Central midline (feet)</li>
+              <li><strong>Pz:</strong> Parietal (sensorimotor)</li>
+            </ul>
           </div>
-        </div>
+        </>
       ) : (
-        <div className="placeholder">
-          <p>No predictions yet. Start a session to see neural interpretability.</p>
-        </div>
+        <div className="empty-state">No predictions yet. Start a session to see XAI insights.</div>
       )}
     </div>
   );
