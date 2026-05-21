@@ -2,7 +2,7 @@
 
 This repository contains a framework for processing Electroencephalogram (EEG) signals and classifying Motor Imagery (MI) tasks using advanced machine learning/deep learning techniques. The goal is to decode user intent from brain activity to facilitate direct communication between the brain and external devices.
 
-## 🚀 Features
+## 🚀 Features 
 * **EEG Preprocessing:** Artifact removal, bandpass filtering, and epoching tailored for MI datasets (e.g., BCI Competition datasets).
 * **Feature Extraction:** Implementation of Spatial Filtering techniques such as Common Spatial Patterns (CSP) or time-frequency representations.
 * **Classification Pipeline:** End-to-end training and evaluation using state-of-the-art architectures (e.g., EEGNet, CNNs, or traditional SVM/Random Forest classifiers).
